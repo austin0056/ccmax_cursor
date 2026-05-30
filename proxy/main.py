@@ -96,6 +96,7 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
             return JSONResponse(status_code=r.status_code, content=_error_to_openai(r.status_code, r.content))
 
         a_resp = r.json()
+        upstream_model = a_resp.get("model") or model  # keep model name consistent with upstream
         anthropic_usage = tk.merge_anthropic_usage(tk.new_anthropic_usage(), a_resp.get("usage"))
         text, tool_calls = convert.extract_completion(a_resp)
         completion_tokens = tk.count_openai_completion_tokens(text, tool_calls)
@@ -104,8 +105,8 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         }
-        log_usage(rid, model, openai_usage, anthropic_usage, stream=False)
-        response = convert.anthropic_to_openai_response(a_resp, model, openai_usage, created)
+        log_usage(rid, upstream_model, openai_usage, anthropic_usage, stream=False)
+        response = convert.anthropic_to_openai_response(a_resp, upstream_model, openai_usage, created)
         return JSONResponse(
             content=response,
             headers={"x-upstream-anthropic-usage": json.dumps(anthropic_usage)},
@@ -128,7 +129,7 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
                     rid=rid,
                     prompt_tokens=prompt_tokens,
                     include_usage=include_usage,
-                    log_cb=lambda ou, au: log_usage(rid, model, ou, au, stream=True),
+                    log_cb=lambda m, ou, au: log_usage(rid, m, ou, au, stream=True),
                 ):
                     yield chunk
 

@@ -267,12 +267,14 @@ async def translate_stream(
     rid: str,
     prompt_tokens: int,
     include_usage: bool,
-    log_cb: Callable[[dict, dict], None],
+    log_cb: Callable[[str, dict, dict], None],
 ) -> AsyncIterator[str]:
     """Consume Anthropic SSE lines, yield OpenAI SSE chunks.
 
-    Side effects on completion: computes OpenAI usage (tiktoken) + supplier
-    Anthropic usage (merged from events) and hands both to ``log_cb``.
+    The reported model name is taken from the upstream ``message_start`` event so
+    the OpenAI-side response matches the supplier exactly. Side effects on
+    completion: computes OpenAI usage (tiktoken) + supplier Anthropic usage
+    (merged from events) and hands the resolved model + both ledgers to ``log_cb``.
     """
     anthropic_usage = tk.new_anthropic_usage()
     text_accum: List[str] = []
@@ -280,9 +282,8 @@ async def translate_stream(
     tool_args: Dict[int, List[str]] = {}  # openai tool index -> arg fragments
     next_oi = 0
     finish_reason: Optional[str] = None
-
-    # opening chunk announces the assistant role
-    yield _sse(_chunk(model, created, rid, {"role": "assistant", "content": ""}, None))
+    resolved_model = model   # overwritten with the upstream's own model name below
+    opened = False           # whether the opening role chunk has been emitted yet
 
     async for raw in line_iter:
         line = raw.strip()
@@ -299,9 +300,21 @@ async def translate_stream(
         etype = evt.get("type")
 
         if etype == "message_start":
-            tk.merge_anthropic_usage(anthropic_usage, (evt.get("message") or {}).get("usage"))
+            msg = evt.get("message") or {}
+            tk.merge_anthropic_usage(anthropic_usage, msg.get("usage"))
+            if msg.get("model"):
+                resolved_model = msg["model"]   # report exactly what the upstream used
+            if not opened:
+                opened = True
+                yield _sse(_chunk(resolved_model, created, rid, {"role": "assistant", "content": ""}, None))
+            continue
 
-        elif etype == "content_block_start":
+        # any other event: ensure the opening role chunk has gone out first
+        if not opened:
+            opened = True
+            yield _sse(_chunk(resolved_model, created, rid, {"role": "assistant", "content": ""}, None))
+
+        if etype == "content_block_start":
             idx = evt.get("index")
             block = evt.get("content_block") or {}
             if block.get("type") == "tool_use":
@@ -309,7 +322,7 @@ async def translate_stream(
                 next_oi += 1
                 tool_meta[idx] = {"oi": oi, "id": block.get("id"), "name": block.get("name")}
                 tool_args[oi] = []
-                yield _sse(_chunk(model, created, rid, {
+                yield _sse(_chunk(resolved_model, created, rid, {
                     "tool_calls": [{
                         "index": oi,
                         "id": block.get("id"),
@@ -319,7 +332,7 @@ async def translate_stream(
                 }, None))
             elif block.get("type") == "text" and block.get("text"):
                 text_accum.append(block["text"])
-                yield _sse(_chunk(model, created, rid, {"content": block["text"]}, None))
+                yield _sse(_chunk(resolved_model, created, rid, {"content": block["text"]}, None))
 
         elif etype == "content_block_delta":
             idx = evt.get("index")
@@ -328,13 +341,13 @@ async def translate_stream(
             if dtype == "text_delta":
                 piece = delta.get("text", "")
                 text_accum.append(piece)
-                yield _sse(_chunk(model, created, rid, {"content": piece}, None))
+                yield _sse(_chunk(resolved_model, created, rid, {"content": piece}, None))
             elif dtype == "input_json_delta":
                 meta = tool_meta.get(idx)
                 if meta is not None:
                     frag = delta.get("partial_json", "")
                     tool_args[meta["oi"]].append(frag)
-                    yield _sse(_chunk(model, created, rid, {
+                    yield _sse(_chunk(resolved_model, created, rid, {
                         "tool_calls": [{"index": meta["oi"], "function": {"arguments": frag}}],
                     }, None))
 
@@ -347,6 +360,10 @@ async def translate_stream(
         # ping / content_block_stop / message_stop -> nothing to emit
 
     # ---- finalize ----
+    if not opened:  # stream produced nothing usable; still emit a well-formed open
+        opened = True
+        yield _sse(_chunk(resolved_model, created, rid, {"role": "assistant", "content": ""}, None))
+
     final_tool_calls = [
         {
             "id": meta["id"],
@@ -364,10 +381,10 @@ async def translate_stream(
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
     }
-    log_cb(openai_usage, anthropic_usage)
+    log_cb(resolved_model, openai_usage, anthropic_usage)
 
     # closing chunk carries the finish reason
-    yield _sse(_chunk(model, created, rid, {}, finish_reason))
+    yield _sse(_chunk(resolved_model, created, rid, {}, finish_reason))
 
     # optional usage chunk (OpenAI 'include_usage' convention: empty choices + usage)
     if include_usage:
@@ -375,7 +392,7 @@ async def translate_stream(
             "id": rid,
             "object": "chat.completion.chunk",
             "created": created,
-            "model": model,
+            "model": resolved_model,
             "choices": [],
             "usage": openai_usage,
         })
