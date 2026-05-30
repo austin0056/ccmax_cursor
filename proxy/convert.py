@@ -104,7 +104,7 @@ def _convert_tool_choice(tool_choice: Any) -> dict:
     return {"type": "auto"}
 
 
-def openai_to_anthropic_request(body: dict, model_override: str = "") -> dict:
+def openai_to_anthropic_request(body: dict, upstream_model: str = "") -> dict:
     messages = body.get("messages") or []
     system_parts: List[str] = []
     a_messages: List[dict] = []
@@ -160,7 +160,7 @@ def openai_to_anthropic_request(body: dict, model_override: str = "") -> dict:
     flush_tool_results()
 
     out: Dict[str, Any] = {
-        "model": model_override or body.get("model"),
+        "model": upstream_model or body.get("model"),
         "messages": a_messages,
         "max_tokens": int(
             body.get("max_tokens") or body.get("max_completion_tokens") or 0
@@ -268,13 +268,14 @@ async def translate_stream(
     prompt_tokens: int,
     include_usage: bool,
     log_cb: Callable[[str, dict, dict], None],
+    display_model: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """Consume Anthropic SSE lines, yield OpenAI SSE chunks.
 
-    The reported model name is taken from the upstream ``message_start`` event so
-    the OpenAI-side response matches the supplier exactly. Side effects on
-    completion: computes OpenAI usage (tiktoken) + supplier Anthropic usage
-    (merged from events) and hands the resolved model + both ledgers to ``log_cb``.
+    Chunks report ``display_model`` when given (a client-facing rebrand alias);
+    otherwise they report the upstream's own model name from ``message_start``.
+    ``log_cb`` always receives the real upstream model name (for cost logging),
+    alongside the OpenAI usage (tiktoken) and merged supplier Anthropic usage.
     """
     anthropic_usage = tk.new_anthropic_usage()
     text_accum: List[str] = []
@@ -282,8 +283,9 @@ async def translate_stream(
     tool_args: Dict[int, List[str]] = {}  # openai tool index -> arg fragments
     next_oi = 0
     finish_reason: Optional[str] = None
-    resolved_model = model   # overwritten with the upstream's own model name below
-    opened = False           # whether the opening role chunk has been emitted yet
+    resolved_model = model            # upstream's real model name (for logging)
+    chunk_model = display_model or model  # client-facing name shown in chunks
+    opened = False                    # whether the opening role chunk has been emitted yet
 
     async for raw in line_iter:
         line = raw.strip()
@@ -303,16 +305,18 @@ async def translate_stream(
             msg = evt.get("message") or {}
             tk.merge_anthropic_usage(anthropic_usage, msg.get("usage"))
             if msg.get("model"):
-                resolved_model = msg["model"]   # report exactly what the upstream used
+                resolved_model = msg["model"]   # the upstream's real model name
+                if not display_model:
+                    chunk_model = msg["model"]  # no rebrand -> show upstream's name
             if not opened:
                 opened = True
-                yield _sse(_chunk(resolved_model, created, rid, {"role": "assistant", "content": ""}, None))
+                yield _sse(_chunk(chunk_model, created, rid, {"role": "assistant", "content": ""}, None))
             continue
 
         # any other event: ensure the opening role chunk has gone out first
         if not opened:
             opened = True
-            yield _sse(_chunk(resolved_model, created, rid, {"role": "assistant", "content": ""}, None))
+            yield _sse(_chunk(chunk_model, created, rid, {"role": "assistant", "content": ""}, None))
 
         if etype == "content_block_start":
             idx = evt.get("index")
@@ -322,7 +326,7 @@ async def translate_stream(
                 next_oi += 1
                 tool_meta[idx] = {"oi": oi, "id": block.get("id"), "name": block.get("name")}
                 tool_args[oi] = []
-                yield _sse(_chunk(resolved_model, created, rid, {
+                yield _sse(_chunk(chunk_model, created, rid, {
                     "tool_calls": [{
                         "index": oi,
                         "id": block.get("id"),
@@ -332,7 +336,7 @@ async def translate_stream(
                 }, None))
             elif block.get("type") == "text" and block.get("text"):
                 text_accum.append(block["text"])
-                yield _sse(_chunk(resolved_model, created, rid, {"content": block["text"]}, None))
+                yield _sse(_chunk(chunk_model, created, rid, {"content": block["text"]}, None))
 
         elif etype == "content_block_delta":
             idx = evt.get("index")
@@ -341,13 +345,13 @@ async def translate_stream(
             if dtype == "text_delta":
                 piece = delta.get("text", "")
                 text_accum.append(piece)
-                yield _sse(_chunk(resolved_model, created, rid, {"content": piece}, None))
+                yield _sse(_chunk(chunk_model, created, rid, {"content": piece}, None))
             elif dtype == "input_json_delta":
                 meta = tool_meta.get(idx)
                 if meta is not None:
                     frag = delta.get("partial_json", "")
                     tool_args[meta["oi"]].append(frag)
-                    yield _sse(_chunk(resolved_model, created, rid, {
+                    yield _sse(_chunk(chunk_model, created, rid, {
                         "tool_calls": [{"index": meta["oi"], "function": {"arguments": frag}}],
                     }, None))
 
@@ -362,7 +366,7 @@ async def translate_stream(
     # ---- finalize ----
     if not opened:  # stream produced nothing usable; still emit a well-formed open
         opened = True
-        yield _sse(_chunk(resolved_model, created, rid, {"role": "assistant", "content": ""}, None))
+        yield _sse(_chunk(chunk_model, created, rid, {"role": "assistant", "content": ""}, None))
 
     final_tool_calls = [
         {
@@ -384,7 +388,7 @@ async def translate_stream(
     log_cb(resolved_model, openai_usage, anthropic_usage)
 
     # closing chunk carries the finish reason
-    yield _sse(_chunk(resolved_model, created, rid, {}, finish_reason))
+    yield _sse(_chunk(chunk_model, created, rid, {}, finish_reason))
 
     # optional usage chunk (OpenAI 'include_usage' convention: empty choices + usage)
     if include_usage:
@@ -392,7 +396,7 @@ async def translate_stream(
             "id": rid,
             "object": "chat.completion.chunk",
             "created": created,
-            "model": resolved_model,
+            "model": chunk_model,
             "choices": [],
             "usage": openai_usage,
         })

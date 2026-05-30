@@ -67,7 +67,16 @@ async def list_models(authorization: Optional[str] = Header(default=None)):
             f"{settings.upstream_base_url}/v1/models",
             headers={"Authorization": f"Bearer {settings.upstream_api_key}"},
         )
-    return JSONResponse(status_code=r.status_code, content=r.json() if r.content else {"object": "list", "data": []})
+    payload = r.json() if r.content else {"object": "list", "data": []}
+    # Rebrand upstream model IDs to their display names so Cursor's picker shows them.
+    u2d = settings.model_map_upstream_to_display
+    if u2d and isinstance(payload, dict):
+        for m in payload.get("data") or []:
+            if isinstance(m, dict) and m.get("id") in u2d:
+                if m.get("root") == m.get("id"):
+                    m["root"] = u2d[m["id"]]
+                m["id"] = u2d[m["id"]]
+    return JSONResponse(status_code=r.status_code, content=payload)
 
 
 @app.post("/v1/chat/completions")
@@ -75,9 +84,11 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
     _check_auth(authorization)
     body = await request.json()
 
-    model = settings.model_override or body.get("model")
+    client_model = body.get("model")
+    upstream_model = settings.resolve_upstream_model(client_model)  # name sent to supplier
+    stream_display_model = client_model if client_model in settings.model_map_display_to_upstream else None
     stream = bool(body.get("stream"))
-    a_request = convert.openai_to_anthropic_request(body, settings.model_override)
+    a_request = convert.openai_to_anthropic_request(body, upstream_model)
 
     # OpenAI-protocol prompt tokens (distribution layer) — counted before sending.
     prompt_tokens = tk.count_openai_prompt_tokens(
@@ -96,7 +107,8 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
             return JSONResponse(status_code=r.status_code, content=_error_to_openai(r.status_code, r.content))
 
         a_resp = r.json()
-        upstream_model = a_resp.get("model") or model  # keep model name consistent with upstream
+        upstream_returned = a_resp.get("model") or upstream_model  # supplier's real model name
+        display_model = settings.resolve_display_model(client_model, upstream_returned)
         anthropic_usage = tk.merge_anthropic_usage(tk.new_anthropic_usage(), a_resp.get("usage"))
         text, tool_calls = convert.extract_completion(a_resp)
         completion_tokens = tk.count_openai_completion_tokens(text, tool_calls)
@@ -105,8 +117,8 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         }
-        log_usage(rid, upstream_model, openai_usage, anthropic_usage, stream=False)
-        response = convert.anthropic_to_openai_response(a_resp, upstream_model, openai_usage, created)
+        log_usage(rid, upstream_returned, openai_usage, anthropic_usage, stream=False)
+        response = convert.anthropic_to_openai_response(a_resp, display_model, openai_usage, created)
         return JSONResponse(
             content=response,
             headers={"x-upstream-anthropic-usage": json.dumps(anthropic_usage)},
@@ -124,12 +136,13 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
                     return
                 async for chunk in convert.translate_stream(
                     r.aiter_lines(),
-                    model=model,
+                    model=upstream_model,
                     created=created,
                     rid=rid,
                     prompt_tokens=prompt_tokens,
                     include_usage=include_usage,
                     log_cb=lambda m, ou, au: log_usage(rid, m, ou, au, stream=True),
+                    display_model=stream_display_model,
                 ):
                     yield chunk
 

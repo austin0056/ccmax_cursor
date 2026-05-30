@@ -145,6 +145,7 @@ final `usage` chunk when `stream_options.include_usage` is set.
 | `UPSTREAM_BASE_URL` / `UPSTREAM_API_KEY` | supplier endpoint + key |
 | `PROXY_API_KEY` | if set, clients must send it (keeps the real key out of Cursor) |
 | `MODEL_OVERRIDE` | force every request onto one upstream model |
+| `MODEL_MAP` | rebrand models: `UPSTREAM=DISPLAY` pairs (e.g. `claude-opus-4-8=max-opus-4.8`). Clients call the display name; the upstream receives the real name; `/v1/models` + responses show the display name |
 | `TOKENIZER_ENCODING` | `o200k_base` (GPT-4o/5) or `cl100k_base` (GPT-4) |
 | `DEFAULT_MAX_TOKENS` | used when the client omits `max_tokens` (Anthropic requires it) |
 | `IMAGE_TOKENS_EACH` | flat OpenAI-side token estimate per image part |
