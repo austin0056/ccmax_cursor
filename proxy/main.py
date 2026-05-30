@@ -68,14 +68,18 @@ async def list_models(authorization: Optional[str] = Header(default=None)):
             headers={"Authorization": f"Bearer {settings.upstream_api_key}"},
         )
     payload = r.json() if r.content else {"object": "list", "data": []}
-    # Rebrand upstream model IDs to their display names so Cursor's picker shows them.
+    # Rebrand upstream model IDs to display names, then restrict to the catalog (if any).
     u2d = settings.model_map_upstream_to_display
-    if u2d and isinstance(payload, dict):
-        for m in payload.get("data") or []:
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        kept = []
+        for m in payload["data"]:
             if isinstance(m, dict) and m.get("id") in u2d:
                 if m.get("root") == m.get("id"):
                     m["root"] = u2d[m["id"]]
                 m["id"] = u2d[m["id"]]
+            if isinstance(m, dict) and settings.is_model_allowed(m.get("id")):
+                kept.append(m)
+        payload["data"] = kept
     return JSONResponse(status_code=r.status_code, content=payload)
 
 
@@ -85,6 +89,12 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
     body = await request.json()
 
     client_model = body.get("model")
+    if not settings.is_model_allowed(client_model):
+        return JSONResponse(status_code=404, content={"error": {
+            "message": f"The model `{client_model}` does not exist or is not available.",
+            "type": "invalid_request_error",
+            "code": "model_not_found",
+        }})
     upstream_model = settings.resolve_upstream_model(client_model)  # name sent to supplier
     stream_display_model = client_model if client_model in settings.model_map_display_to_upstream else None
     stream = bool(body.get("stream"))
@@ -117,7 +127,7 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         }
-        log_usage(rid, upstream_returned, openai_usage, anthropic_usage, stream=False)
+        log_usage(rid, upstream_returned, openai_usage, anthropic_usage, stream=False, client_model=display_model)
         response = convert.anthropic_to_openai_response(a_resp, display_model, openai_usage, created)
         return JSONResponse(
             content=response,
@@ -141,7 +151,7 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
                     rid=rid,
                     prompt_tokens=prompt_tokens,
                     include_usage=include_usage,
-                    log_cb=lambda m, ou, au: log_usage(rid, m, ou, au, stream=True),
+                    log_cb=lambda um, cm, ou, au: log_usage(rid, um, ou, au, stream=True, client_model=cm),
                     display_model=stream_display_model,
                 ):
                     yield chunk

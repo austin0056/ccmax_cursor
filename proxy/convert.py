@@ -267,7 +267,7 @@ async def translate_stream(
     rid: str,
     prompt_tokens: int,
     include_usage: bool,
-    log_cb: Callable[[str, dict, dict], None],
+    log_cb: Callable[[str, str, dict, dict], None],
     display_model: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """Consume Anthropic SSE lines, yield OpenAI SSE chunks.
@@ -385,7 +385,7 @@ async def translate_stream(
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
     }
-    log_cb(resolved_model, openai_usage, anthropic_usage)
+    log_cb(resolved_model, chunk_model, openai_usage, anthropic_usage)
 
     # closing chunk carries the finish reason
     yield _sse(_chunk(chunk_model, created, rid, {}, finish_reason))

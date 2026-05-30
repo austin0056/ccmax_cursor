@@ -85,6 +85,14 @@ def _parse_model_map(raw: str):
     return u2d, d2u
 
 
+def _parse_list(raw: str):
+    """Parse a comma/semicolon/newline separated list into a set of trimmed names."""
+    raw = (raw or "").strip()
+    if not raw:
+        return set()
+    return {i.strip() for i in raw.replace(";", ",").replace("\n", ",").split(",") if i.strip()}
+
+
 class Settings:
     # --- upstream (the supplier, Anthropic protocol) ---
     upstream_base_url = _get("UPSTREAM_BASE_URL", "https://api.aigclaw.ai").rstrip("/")
@@ -100,6 +108,8 @@ class Settings:
     model_override = _get("MODEL_OVERRIDE", "")  # force every request to one upstream model (optional)
     # Optional rebrand: map real upstream names <-> client-facing display names.
     model_map_upstream_to_display, model_map_display_to_upstream = _parse_model_map(_get("MODEL_MAP", ""))
+    # Optional catalog: client-facing names to expose & accept. Empty = expose/accept all.
+    model_allow = _parse_list(_get("MODEL_ALLOW", ""))
 
     # --- OpenAI-protocol token counting (distribution layer billing) ---
     tokenizer_encoding = _get("TOKENIZER_ENCODING", "o200k_base")  # o200k_base = gpt-4o/4.1/5 family
@@ -127,6 +137,10 @@ class Settings:
         if client_model in self.model_map_display_to_upstream:
             return client_model
         return upstream_returned
+
+    def is_model_allowed(self, client_model: str) -> bool:
+        """Whether a client-facing model name is in the catalog (always True if no allowlist)."""
+        return not self.model_allow or client_model in self.model_allow
 
 
 settings = Settings()

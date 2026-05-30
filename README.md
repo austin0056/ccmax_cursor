@@ -101,7 +101,8 @@ Every request appends one line to `usage.jsonl` and prints a summary to the cons
 
 ```json
 {
-  "ts": 1780049312, "request_id": "chatcmpl-…", "model": "claude-opus-4-8", "stream": true,
+  "ts": 1780049312, "request_id": "chatcmpl-…",
+  "model": "claude-opus-4-8", "client_model": "max-opus-4.8", "stream": true,
   "openai_protocol":    {"prompt_tokens": 14, "completion_tokens": 22, "total_tokens": 36},
   "anthropic_protocol": {"input_tokens": 1043, "output_tokens": 22,
                           "cache_creation_input_tokens": 358, "cache_read_input_tokens": 5551,
@@ -146,6 +147,7 @@ final `usage` chunk when `stream_options.include_usage` is set.
 | `PROXY_API_KEY` | if set, clients must send it (keeps the real key out of Cursor) |
 | `MODEL_OVERRIDE` | force every request onto one upstream model |
 | `MODEL_MAP` | rebrand models: `UPSTREAM=DISPLAY` pairs (e.g. `claude-opus-4-8=max-opus-4.8`). Clients call the display name; the upstream receives the real name; `/v1/models` + responses show the display name |
+| `MODEL_ALLOW` | catalog allowlist (client-facing names, comma-separated): only these appear in `/v1/models` and are accepted; requests for others return `404 model_not_found`. Empty = expose/accept all |
 | `TOKENIZER_ENCODING` | `o200k_base` (GPT-4o/5) or `cl100k_base` (GPT-4) |
 | `DEFAULT_MAX_TOKENS` | used when the client omits `max_tokens` (Anthropic requires it) |
 | `IMAGE_TOKENS_EACH` | flat OpenAI-side token estimate per image part |

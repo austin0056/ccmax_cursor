@@ -9,18 +9,20 @@ to stderr. This is the artifact you reconcile billing against:
 import json
 import sys
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 from .config import settings
 from . import tokenizer as tk
 
 
 def log_usage(request_id: str, model: str, openai_usage: Dict[str, int],
-              anthropic_usage: Dict[str, int], stream: bool) -> None:
+              anthropic_usage: Dict[str, int], stream: bool,
+              client_model: Optional[str] = None) -> None:
     record = {
         "ts": int(time.time()),
         "request_id": request_id,
-        "model": model,
+        "model": model,                          # real upstream model (supplier cost)
+        "client_model": client_model or model,   # client-facing name (distribution billing)
         "stream": stream,
         "openai_protocol": openai_usage,
         "anthropic_protocol": {
@@ -39,8 +41,9 @@ def log_usage(request_id: str, model: str, openai_usage: Dict[str, int],
         pass
 
     au = anthropic_usage
+    name = model if client_model in (None, model) else f"{client_model}->{model}"
     summary = (
-        f"[usage] {model} stream={int(stream)} | "
+        f"[usage] {name} stream={int(stream)} | "
         f"OpenAI(prompt={openai_usage['prompt_tokens']},"
         f"compl={openai_usage['completion_tokens']},"
         f"total={openai_usage['total_tokens']}) | "
