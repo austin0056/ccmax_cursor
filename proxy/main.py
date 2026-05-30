@@ -1,6 +1,7 @@
 """FastAPI app exposing a perfect OpenAI-protocol surface for Cursor, backed by
 the Anthropic-protocol upstream, with dual token accounting on every request."""
 import json
+import sys
 import time
 from typing import Optional
 
@@ -140,24 +141,33 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
     include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
 
     async def event_stream():
-        async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
-            async with client.stream("POST", url, headers=headers, json=a_request) as r:
-                if r.status_code >= 400:
-                    raw = await r.aread()
-                    yield convert._sse(_error_to_openai(r.status_code, raw))
-                    yield "data: [DONE]\n\n"
-                    return
-                async for chunk in convert.translate_stream(
-                    r.aiter_lines(),
-                    model=upstream_model,
-                    created=created,
-                    rid=rid,
-                    prompt_tokens=prompt_tokens,
-                    include_usage=include_usage,
-                    log_cb=lambda um, cm, ou, au: log_usage(rid, um, ou, au, stream=True, client_model=cm),
-                    display_model=stream_display_model,
-                ):
-                    yield chunk
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(settings.request_timeout, connect=15.0)) as client:
+                async with client.stream("POST", url, headers=headers, json=a_request) as r:
+                    if r.status_code >= 400:
+                        raw = await r.aread()
+                        print(f"[stream-error] {rid}: upstream HTTP {r.status_code}: {raw[:300]!r}",
+                              file=sys.stderr, flush=True)
+                        yield convert._sse(_error_to_openai(r.status_code, raw))
+                        yield "data: [DONE]\n\n"
+                        return
+                    async for chunk in convert.translate_stream(
+                        r.aiter_lines(),
+                        model=upstream_model,
+                        created=created,
+                        rid=rid,
+                        prompt_tokens=prompt_tokens,
+                        include_usage=include_usage,
+                        log_cb=lambda um, cm, ou, au: log_usage(rid, um, ou, au, stream=True, client_model=cm),
+                        display_model=stream_display_model,
+                    ):
+                        yield chunk
+        except Exception as e:
+            # Upstream drop / timeout mid-stream: end the SSE cleanly instead of a silent cutoff,
+            # so the client gets a proper finish rather than a hung/interrupted connection.
+            print(f"[stream-error] {rid}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            yield convert._sse(convert._chunk(stream_display_model or upstream_model, created, rid, {}, "stop"))
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         event_stream(),

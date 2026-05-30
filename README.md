@@ -153,26 +153,37 @@ final `usage` chunk when `stream_options.include_usage` is set.
 | `IMAGE_TOKENS_EACH` | flat OpenAI-side token estimate per image part |
 | `PRICE_*_PER_MTOK` | optional Anthropic prices → per-request `supplier_cost_usd` |
 | `DEBUG_DUMP` | `1` to log each request's tools/`tool_choice` and the response's `tool_calls` — compact line to stderr (Zeabur logs) + full JSON to `debug.jsonl`. For diagnosing client quirks like Cursor "Plan mode shows 0 todos" |
-| `SYSTEM_SUFFIX` | text appended to every request's system prompt; re-asserts proactive tool use. Fixes Cursor "Plan mode shows 0 todos" (see Troubleshooting) |
+| `SYSTEM_SUFFIX` | text appended to every request's system prompt; re-asserts proactive tool use. Fixes Cursor "Plan mode shows 0 todos" **and** agent edits stopping early (see Troubleshooting) |
 
 ## Troubleshooting
 
-**Cursor "Plan mode" shows 0 todos.** The proxy converts tool calls correctly (single,
-array, parallel, streaming) — verified. The cause is that the upstream relay injects its
-own large system prompt, which dilutes Cursor's instruction to *proactively* call the
-todo/plan tool, so the model writes the plan as prose instead and Cursor extracts 0 todos.
-(Tell-tale sign: if you explicitly type "fill in the todos", it works.)
+The upstream relay injects a large system prompt that **biases the model against calling
+tools** — it tends to *describe* actions in prose instead of *calling* the provided tool.
+In Cursor this shows up two ways:
 
-Fix: set `SYSTEM_SUFFIX` to re-assert proactive tool use. Reproduced and verified — without
-it the model returned prose (0 tool calls) on every run; with it the model called the
-plan tool every run. Recommended value (generic — maps to whatever the client names its tool):
+- **Plan mode shows 0 todos** — the model writes the plan as prose instead of calling the
+  todo/plan tool, so Cursor extracts nothing. (Tell-tale: typing "fill in the todos" works.)
+- **Agent edits stop early / "interrupt"** — the model sometimes answers with prose instead
+  of calling the edit tool, so no edit is applied. (Happens ~1 in 4 even with no suffix; a
+  "you MUST call the todo tool first" suffix makes it *worse* by hijacking agent mode into
+  planning instead of editing.)
+
+The proxy itself converts tool calls correctly — single, array-arg, parallel, streaming, and
+multi-turn `tool_use`/`tool_result` round-trips are all verified, and the upstream does not
+truncate large edits. The fix is to re-assert proactive tool use via `SYSTEM_SUFFIX`:
 
 ```
-SYSTEM_SUFFIX=You are operating inside an agentic coding IDE. When the user asks you to build, implement, fix, refactor, or plan a multi-step task, you MUST use the planning/todo tool provided in this request to record the steps as a structured todo list before doing anything else. Do not only describe the plan in prose; always prefer calling the provided tools over describing actions in text.
+SYSTEM_SUFFIX=You are operating inside an agentic coding IDE. Always carry out the user request by CALLING the tools provided in this request; never just describe what you would do in prose when a provided tool can do it. Edit code with the editing tools, and when a todo or planning tool is provided, record the plan by calling that tool. If any provided tool can perform the next step, call it instead of writing prose.
 ```
 
-Set it in Zeabur → Variables (or `.env` locally), then redeploy. Use `DEBUG_DUMP=1` to confirm
-the model is now emitting `tool_calls` for the plan tool.
+This wording is **action-first with a conditional plan clause** — validated at **agent 4/4
+edits** and **plan 4/4 todos**. Do *not* use "you MUST use the todo tool before doing anything
+else" (it hijacked agent mode ~2 in 4). Set it in Zeabur → Variables (or `.env`), redeploy, and
+use `DEBUG_DUMP=1` to confirm responses now carry `tool_calls`.
+
+If an agent stream still cuts off abruptly, check the proxy logs for a `[stream-error]` line:
+the proxy now ends the SSE cleanly on an upstream drop/timeout (instead of hanging) and logs
+the cause.
 
 ## Caveats
 
