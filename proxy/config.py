@@ -118,6 +118,10 @@ class Settings:
     tokenizer_encoding = _get("TOKENIZER_ENCODING", "o200k_base")  # o200k_base = gpt-4o/4.1/5 family
     default_max_tokens = _i("DEFAULT_MAX_TOKENS", 4096)
     image_tokens_each = _i("IMAGE_TOKENS_EACH", 85)  # flat estimate per image part
+    # How the returned `usage` is counted: "anthropic" (default) reports the supplier's real
+    # Anthropic numbers incl. the cache breakdown (matches the upstream's billing exactly);
+    # "openai" keeps OpenAI/tiktoken prompt/completion. Cache fields are passed through either way.
+    usage_source = _get("USAGE_SOURCE", "anthropic").strip().lower()
 
     # --- supplier cost reconciliation (Anthropic prices, USD per 1M tokens; 0 = disabled) ---
     price_input = _f("PRICE_INPUT_PER_MTOK", 0.0)

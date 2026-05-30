@@ -149,6 +149,7 @@ final `usage` chunk when `stream_options.include_usage` is set.
 | `MODEL_MAP` | rebrand models: `UPSTREAM=DISPLAY` pairs (e.g. `claude-opus-4-8=max-opus-4.8`). Clients call the display name; the upstream receives the real name; `/v1/models` + responses show the display name |
 | `MODEL_ALLOW` | catalog allowlist (client-facing names, comma-separated): only these appear in `/v1/models` and are accepted; requests for others return `404 model_not_found`. Empty = expose/accept all |
 | `TOKENIZER_ENCODING` | `o200k_base` (GPT-4o/5) or `cl100k_base` (GPT-4) |
+| `USAGE_SOURCE` | `anthropic` (default) — returned `usage` reports the supplier's real numbers incl. the 5m/1h cache-write + cache-read breakdown (a billing layer matches the upstream exactly); `openai` — keep tiktoken prompt/completion. Cache fields pass through either way |
 | `DEFAULT_MAX_TOKENS` | used when the client omits `max_tokens` (Anthropic requires it) |
 | `IMAGE_TOKENS_EACH` | flat OpenAI-side token estimate per image part |
 | `PRICE_*_PER_MTOK` | optional Anthropic prices → per-request `supplier_cost_usd` |

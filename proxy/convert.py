@@ -421,14 +421,9 @@ async def translate_stream(
     reasoning_text = "".join(reasoning_accum)
     finish_reason = finish_reason or ("tool_calls" if final_tool_calls else "stop")
 
-    completion_tokens = tk.count_openai_completion_tokens(completion_text, final_tool_calls, reasoning_text)
-    openai_usage = {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens,
-    }
-    if reasoning_text:
-        openai_usage["completion_tokens_details"] = {"reasoning_tokens": tk.count_text(reasoning_text)}
+    completion_tt = tk.count_openai_completion_tokens(completion_text, final_tool_calls, reasoning_text)
+    openai_usage = tk.build_usage(anthropic_usage, prompt_tokens, completion_tt,
+                                  tk.count_text(reasoning_text) if reasoning_text else 0)
     log_cb(resolved_model, chunk_model, openai_usage, anthropic_usage)
     debug.log_response(rid, finish_reason, final_tool_calls, completion_text, stream=True)
 

@@ -176,10 +176,15 @@ _ANTHROPIC_KEYS = (
     "cache_creation_input_tokens",
     "cache_read_input_tokens",
 )
+# cache_creation TTL split lives nested under usage.cache_creation.ephemeral_{5m,1h}_input_tokens
+_ANTHROPIC_EXTRA = (
+    "cache_creation_5m_input_tokens",
+    "cache_creation_1h_input_tokens",
+)
 
 
 def new_anthropic_usage() -> Dict[str, int]:
-    return {k: 0 for k in _ANTHROPIC_KEYS}
+    return {k: 0 for k in _ANTHROPIC_KEYS + _ANTHROPIC_EXTRA}
 
 
 def merge_anthropic_usage(acc: Dict[str, int], usage: Optional[dict]) -> Dict[str, int]:
@@ -188,6 +193,7 @@ def merge_anthropic_usage(acc: Dict[str, int], usage: Optional[dict]) -> Dict[st
     Anthropic streaming reports cumulative/authoritative values; this upstream in
     particular only reveals the cached-prompt cost in ``message_delta``. Taking the
     latest value for each key captures that, where ``message_start`` alone would not.
+    Also captures the 5m/1h cache-write TTL split from the nested ``cache_creation`` object.
     """
     if not usage:
         return acc
@@ -195,7 +201,59 @@ def merge_anthropic_usage(acc: Dict[str, int], usage: Optional[dict]) -> Dict[st
         val = usage.get(key)
         if isinstance(val, (int, float)):
             acc[key] = int(val)
+    cc = usage.get("cache_creation")
+    if isinstance(cc, dict):
+        for src, dst in (("ephemeral_5m_input_tokens", "cache_creation_5m_input_tokens"),
+                         ("ephemeral_1h_input_tokens", "cache_creation_1h_input_tokens")):
+            v = cc.get(src)
+            if isinstance(v, (int, float)):
+                acc[dst] = int(v)
     return acc
+
+
+def build_usage(anthropic_usage: Dict[str, int], prompt_tiktoken: int = 0,
+                completion_tiktoken: int = 0, reasoning_tiktoken: int = 0) -> dict:
+    """Build the OpenAI ``usage`` object returned to the client.
+
+    USAGE_SOURCE=anthropic (default): prompt/completion come from the supplier's real
+    Anthropic counts, and the raw input_tokens/output_tokens are also exposed — a billing
+    layer matches the upstream exactly. USAGE_SOURCE=openai: prompt/completion stay
+    tiktoken (the original distribution-protocol behavior). Either way the Anthropic cache
+    breakdown (5m/1h write + read) is passed through so cache cost is recordable downstream.
+    """
+    a = anthropic_usage
+    inp = a.get("input_tokens", 0)
+    out = a.get("output_tokens", 0)
+    cw = a.get("cache_creation_input_tokens", 0)
+    cr = a.get("cache_read_input_tokens", 0)
+    cw5 = a.get("cache_creation_5m_input_tokens", 0)
+    cw1 = a.get("cache_creation_1h_input_tokens", 0)
+
+    if settings.usage_source == "openai":
+        prompt, completion = prompt_tiktoken, completion_tiktoken
+    else:  # "anthropic" (default): align with the upstream's billing
+        prompt, completion = inp + cr + cw, out
+
+    usage: Dict[str, Any] = {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+    if cr or cw or cw5 or cw1:
+        usage["prompt_tokens_details"] = {"cached_tokens": cr}
+        usage["cache_creation_input_tokens"] = cw
+        usage["cache_read_input_tokens"] = cr
+        usage["cache_creation"] = {
+            "ephemeral_5m_input_tokens": cw5,
+            "ephemeral_1h_input_tokens": cw1,
+        }
+    if settings.usage_source != "openai":
+        # supplier's raw Anthropic counts; an Anthropic-aware billing layer reads these verbatim
+        usage["input_tokens"] = inp
+        usage["output_tokens"] = out
+    if reasoning_tiktoken:
+        usage["completion_tokens_details"] = {"reasoning_tokens": reasoning_tiktoken}
+    return usage
 
 
 def anthropic_billable_input(usage: Dict[str, int]) -> int:

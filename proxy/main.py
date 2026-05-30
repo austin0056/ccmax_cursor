@@ -145,9 +145,11 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
     stream = bool(body.get("stream"))
     a_request = convert.openai_to_anthropic_request(body, upstream_model)
 
-    # OpenAI-protocol prompt tokens (distribution layer) — counted before sending.
-    prompt_tokens = tk.count_openai_prompt_tokens(
-        body.get("messages") or [], body.get("tools"), body.get("tool_choice")
+    # OpenAI-protocol prompt tokens (only needed when USAGE_SOURCE=openai; skipping the
+    # tiktoken pass in anthropic mode also avoids a CPU spike on very large/1M prompts).
+    prompt_tokens = (
+        tk.count_openai_prompt_tokens(body.get("messages") or [], body.get("tools"), body.get("tool_choice"))
+        if settings.usage_source == "openai" else 0
     )
 
     created = int(time.time())
@@ -169,14 +171,9 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
         anthropic_usage = tk.merge_anthropic_usage(tk.new_anthropic_usage(), a_resp.get("usage"))
         text, tool_calls, reasoning = convert.extract_completion(a_resp)
         debug.log_response(rid, convert.map_finish_reason(a_resp.get("stop_reason")), tool_calls, text, stream=False)
-        completion_tokens = tk.count_openai_completion_tokens(text, tool_calls, reasoning)
-        openai_usage = {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        }
-        if reasoning:
-            openai_usage["completion_tokens_details"] = {"reasoning_tokens": tk.count_text(reasoning)}
+        completion_tt = tk.count_openai_completion_tokens(text, tool_calls, reasoning)
+        openai_usage = tk.build_usage(anthropic_usage, prompt_tokens, completion_tt,
+                                      tk.count_text(reasoning) if reasoning else 0)
         log_usage(rid, upstream_returned, openai_usage, anthropic_usage, stream=False, client_model=display_model)
         response = convert.anthropic_to_openai_response(a_resp, display_model, openai_usage, created)
         return JSONResponse(
