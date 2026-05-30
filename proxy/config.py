@@ -110,6 +110,9 @@ class Settings:
     model_map_upstream_to_display, model_map_display_to_upstream = _parse_model_map(_get("MODEL_MAP", ""))
     # Optional catalog: client-facing names to expose & accept. Empty = expose/accept all.
     model_allow = _parse_list(_get("MODEL_ALLOW", ""))
+    # Optional: text appended to every request's system prompt. Use it to reinforce client
+    # instructions an upstream relay's injected prompt may dilute (e.g. proactive tool use).
+    system_suffix = _get("SYSTEM_SUFFIX", "")
 
     # --- OpenAI-protocol token counting (distribution layer billing) ---
     tokenizer_encoding = _get("TOKENIZER_ENCODING", "o200k_base")  # o200k_base = gpt-4o/4.1/5 family

@@ -10,6 +10,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 from . import debug
 from . import tokenizer as tk
+from .config import settings
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -167,8 +168,11 @@ def openai_to_anthropic_request(body: dict, upstream_model: str = "") -> dict:
             body.get("max_tokens") or body.get("max_completion_tokens") or 0
         ) or _default_max_tokens(),
     }
-    if system_parts:
-        out["system"] = "\n\n".join(system_parts)
+    system_text = "\n\n".join(p for p in system_parts if p)
+    if settings.system_suffix:
+        system_text = f"{system_text}\n\n{settings.system_suffix}".strip()
+    if system_text:
+        out["system"] = system_text
     if body.get("temperature") is not None:
         out["temperature"] = max(0.0, min(1.0, float(body["temperature"])))  # Anthropic caps at 1.0
     if body.get("top_p") is not None:
