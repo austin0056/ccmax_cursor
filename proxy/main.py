@@ -160,6 +160,7 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
         async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
             r = await client.post(url, headers=headers, json=a_request)
         if r.status_code >= 400:
+            debug.log_error(rid, r.status_code, r.text, stream=False)
             return JSONResponse(status_code=r.status_code, content=_error_to_openai(r.status_code, r.content))
 
         a_resp = r.json()
@@ -189,6 +190,7 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
                 async with client.stream("POST", url, headers=headers, json=a_request) as r:
                     if r.status_code >= 400:
                         raw = await r.aread()
+                        debug.log_error(rid, r.status_code, raw.decode("utf-8", "ignore"), stream=True)
                         print(f"[stream-error] {rid}: upstream HTTP {r.status_code}: {raw[:300]!r}",
                               file=sys.stderr, flush=True)
                         yield convert._sse(_error_to_openai(r.status_code, raw))

@@ -77,3 +77,15 @@ def log_response(rid: str, finish_reason, tool_calls, text, stream: bool) -> Non
         "stream": bool(stream), "finish_reason": finish_reason,
         "tool_calls": tool_calls, "text": text,
     })
+
+
+def log_error(rid: str, status, detail: str, stream: bool) -> None:
+    if not settings.debug_dump:
+        return
+    detail = (detail or "")[:2000]
+    print(f"[debug:err] {rid} stream={int(bool(stream))} upstream_status={status} detail={detail[:200]!r}",
+          file=sys.stderr, flush=True)
+    _write({
+        "ts": int(time.time()), "request_id": rid, "kind": "error",
+        "stream": bool(stream), "upstream_status": status, "detail": detail,
+    })
