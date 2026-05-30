@@ -231,8 +231,11 @@ def build_usage(anthropic_usage: Dict[str, int], prompt_tiktoken: int = 0,
 
     if settings.usage_source == "openai":
         prompt, completion = prompt_tiktoken, completion_tiktoken
-    else:  # "anthropic" (default): align with the upstream's billing
-        prompt, completion = inp + cr + cw, out
+    else:  # "anthropic" (default): supplier numbers in OpenAI shape.
+        # OpenAI's prompt_tokens INCLUDES cached reads (cached_tokens is a subset of it).
+        # An OpenAI-family billing layer derives fresh input as prompt_tokens - cached_tokens,
+        # so prompt_tokens must include cache_read but NOT cache_creation (billed separately).
+        prompt, completion = inp + cr, out
 
     usage: Dict[str, Any] = {
         "prompt_tokens": prompt,
@@ -247,10 +250,6 @@ def build_usage(anthropic_usage: Dict[str, int], prompt_tiktoken: int = 0,
             "ephemeral_5m_input_tokens": cw5,
             "ephemeral_1h_input_tokens": cw1,
         }
-    if settings.usage_source != "openai":
-        # supplier's raw Anthropic counts; an Anthropic-aware billing layer reads these verbatim
-        usage["input_tokens"] = inp
-        usage["output_tokens"] = out
     if reasoning_tiktoken:
         usage["completion_tokens_details"] = {"reasoning_tokens": reasoning_tiktoken}
     return usage
