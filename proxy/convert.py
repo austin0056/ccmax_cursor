@@ -93,6 +93,30 @@ def _openai_content_to_blocks(content: Any) -> Any:
     return str(content)
 
 
+def _to_anthropic_tool(t: dict) -> dict:
+    """Convert one client tool to an Anthropic tool.
+
+    Handles BOTH shapes a client may send to an OpenAI-compatible endpoint:
+      * OpenAI:  {"type":"function","function":{"name","description","parameters"}}
+      * flat/Anthropic-style: {"name","description","input_schema"}  <-- Cursor sends this
+    Critically, the parameters schema may live under `parameters` OR `input_schema`;
+    missing it here sends an EMPTY schema upstream and the model has to guess args.
+    """
+    fn = t.get("function") if isinstance(t.get("function"), dict) else t
+    schema = (
+        fn.get("parameters")
+        or fn.get("input_schema")
+        or t.get("parameters")
+        or t.get("input_schema")
+        or {"type": "object", "properties": {}}
+    )
+    return {
+        "name": fn.get("name") or t.get("name"),
+        "description": fn.get("description") or t.get("description") or "",
+        "input_schema": schema,
+    }
+
+
 def _convert_tool_choice(tool_choice: Any) -> dict:
     if tool_choice is None or tool_choice == "auto":
         return {"type": "auto"}
@@ -184,15 +208,7 @@ def openai_to_anthropic_request(body: dict, upstream_model: str = "") -> dict:
         out["stream"] = True
     tools = body.get("tools")
     if tools:
-        out["tools"] = [
-            {
-                "name": (t.get("function", t) or {}).get("name"),
-                "description": (t.get("function", t) or {}).get("description", "") or "",
-                "input_schema": (t.get("function", t) or {}).get("parameters")
-                or {"type": "object", "properties": {}},
-            }
-            for t in tools
-        ]
+        out["tools"] = [_to_anthropic_tool(t) for t in tools if isinstance(t, dict)]
         out["tool_choice"] = _convert_tool_choice(body.get("tool_choice"))
     return out
 

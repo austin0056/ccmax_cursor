@@ -115,10 +115,14 @@ def count_tools_tokens(tools: Optional[List[dict]]) -> int:
         return 0
     total = 12  # overall wrapper (approx)
     for tool in tools:
-        fn = tool.get("function", tool) if isinstance(tool, dict) else {}
+        if not isinstance(tool, dict):
+            continue
+        fn = tool.get("function") if isinstance(tool.get("function"), dict) else tool
         total += _count_str(fn.get("name", ""))
         total += _count_str(fn.get("description", ""))
-        total += _count_tool_schema(fn.get("parameters") or {})
+        # schema may be under `parameters` (OpenAI) or `input_schema` (Cursor/Anthropic-style)
+        schema = fn.get("parameters") or fn.get("input_schema") or tool.get("input_schema") or {}
+        total += _count_tool_schema(schema)
         total += 12  # per-function wrapper (approx)
     return total
 
