@@ -124,6 +124,9 @@ class Settings:
 
     # --- logging ---
     usage_log_path = _get("USAGE_LOG_PATH", "usage.jsonl")
+    # Opt-in request/response debugging (DEBUG_DUMP=1): compact summary to stderr + full JSON to file.
+    debug_dump = _get("DEBUG_DUMP", "").lower() not in ("", "0", "false", "no", "off")
+    debug_log_path = _get("DEBUG_LOG_PATH", "debug.jsonl")
 
     def resolve_upstream_model(self, client_model: str) -> str:
         """The model name to actually send to the upstream supplier."""

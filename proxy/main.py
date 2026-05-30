@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import convert
+from . import debug
 from . import tokenizer as tk
 from .config import settings
 from .usage_log import log_usage
@@ -109,6 +110,7 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
     rid = convert.gen_id()
     url = f"{settings.upstream_base_url}/v1/messages"
     headers = _anthropic_headers()
+    debug.log_request(rid, body, a_request, stream)
 
     if not stream:
         async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
@@ -121,6 +123,7 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
         display_model = settings.resolve_display_model(client_model, upstream_returned)
         anthropic_usage = tk.merge_anthropic_usage(tk.new_anthropic_usage(), a_resp.get("usage"))
         text, tool_calls = convert.extract_completion(a_resp)
+        debug.log_response(rid, convert.map_finish_reason(a_resp.get("stop_reason")), tool_calls, text, stream=False)
         completion_tokens = tk.count_openai_completion_tokens(text, tool_calls)
         openai_usage = {
             "prompt_tokens": prompt_tokens,

@@ -152,6 +152,7 @@ final `usage` chunk when `stream_options.include_usage` is set.
 | `DEFAULT_MAX_TOKENS` | used when the client omits `max_tokens` (Anthropic requires it) |
 | `IMAGE_TOKENS_EACH` | flat OpenAI-side token estimate per image part |
 | `PRICE_*_PER_MTOK` | optional Anthropic prices → per-request `supplier_cost_usd` |
+| `DEBUG_DUMP` | `1` to log each request's tools/`tool_choice` and the response's `tool_calls` — compact line to stderr (Zeabur logs) + full JSON to `debug.jsonl`. For diagnosing client quirks like Cursor "Plan mode shows 0 todos" |
 
 ## Caveats
 

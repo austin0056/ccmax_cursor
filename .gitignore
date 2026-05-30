@@ -15,6 +15,7 @@ env/
 
 # --- runtime / logs ---
 usage.jsonl
+debug.jsonl
 *.log
 
 # --- os / editors ---

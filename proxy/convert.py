@@ -8,6 +8,7 @@ import json
 import uuid
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
+from . import debug
 from . import tokenizer as tk
 
 # ---------------------------------------------------------------------------
@@ -386,6 +387,7 @@ async def translate_stream(
         "total_tokens": prompt_tokens + completion_tokens,
     }
     log_cb(resolved_model, chunk_model, openai_usage, anthropic_usage)
+    debug.log_response(rid, finish_reason, final_tool_calls, completion_text, stream=True)
 
     # closing chunk carries the finish reason
     yield _sse(_chunk(chunk_model, created, rid, {}, finish_reason))
