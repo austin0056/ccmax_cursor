@@ -188,6 +188,21 @@ If an agent stream still cuts off abruptly, check the proxy logs for a `[stream-
 the proxy now ends the SSE cleanly on an upstream drop/timeout (instead of hanging) and logs
 the cause.
 
+## Reasoning & long context
+
+**Extended thinking (reasoning).** Use a `-thinking` upstream model (e.g. `claude-sonnet-4-6-thinking`)
+— the relay turns thinking on by model name. The proxy surfaces the model's thinking as OpenAI
+`reasoning_content` (`message.reasoning_content` non-stream, `delta.reasoning_content` streaming) and
+reports `usage.completion_tokens_details.reasoning_tokens`. **For non-thinking models nothing changes** —
+these fields only appear when the model actually produces thinking, so existing behavior is unaffected.
+Pair with `MODEL_MAP` to expose a branded name, e.g. `MODEL_MAP=claude-sonnet-4-6-thinking=max-thinking`.
+
+**1M context.** The proxy is a transparent passthrough and imposes no context limit of its own. To turn on
+Anthropic's 1M window, set `ANTHROPIC_BETA=context-1m-2025-08-07` — it is forwarded as the `anthropic-beta`
+header (the upstream accepts it). Whether 1M is actually available depends on the supplier/model. Note: the
+distribution-layer tiktoken count runs synchronously over the full prompt, so very large contexts add a few
+seconds of CPU per request.
+
 ## Caveats
 
 - **Tool-schema tokens** on the OpenAI side are an approximation (OpenAI doesn't document the

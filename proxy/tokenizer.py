@@ -151,14 +151,20 @@ def count_openai_prompt_tokens(
     return total
 
 
-def count_openai_completion_tokens(content: Optional[str], tool_calls: Optional[List[dict]] = None) -> int:
-    total = _count_str(content)
+def count_openai_completion_tokens(content: Optional[str], tool_calls: Optional[List[dict]] = None,
+                                   reasoning: Optional[str] = None) -> int:
+    total = _count_str(content) + _count_str(reasoning)
     for tc in tool_calls or []:
         fn = tc.get("function", {})
         total += _count_str(fn.get("name", ""))
         total += _count_str(fn.get("arguments", "") or "")
         total += _PER_TOOL_CALL
     return total
+
+
+def count_text(s: Optional[str]) -> int:
+    """Token count of a plain string (e.g. reasoning content), via the OpenAI tokenizer."""
+    return _count_str(s)
 
 
 # ---------------------------------------------------------------------------

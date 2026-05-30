@@ -222,14 +222,21 @@ def _default_max_tokens() -> int:
 # response (non-stream):  Anthropic -> OpenAI
 # ---------------------------------------------------------------------------
 
-def extract_completion(a_resp: dict) -> Tuple[str, List[dict]]:
-    """Return (text, openai_tool_calls) from an Anthropic message's content blocks."""
+def extract_completion(a_resp: dict) -> Tuple[str, List[dict], str]:
+    """Return (text, openai_tool_calls, reasoning) from an Anthropic message's content blocks.
+
+    `reasoning` is the concatenated extended-thinking text (empty for non-thinking models),
+    surfaced to the client as OpenAI `reasoning_content`.
+    """
     text_parts: List[str] = []
     tool_calls: List[dict] = []
+    reasoning_parts: List[str] = []
     for block in a_resp.get("content") or []:
         btype = block.get("type")
         if btype == "text":
             text_parts.append(block.get("text", ""))
+        elif btype == "thinking":
+            reasoning_parts.append(block.get("thinking", ""))
         elif btype == "tool_use":
             tool_calls.append({
                 "id": block.get("id") or gen_id("call"),
@@ -239,13 +246,16 @@ def extract_completion(a_resp: dict) -> Tuple[str, List[dict]]:
                     "arguments": json.dumps(block.get("input") or {}, ensure_ascii=False),
                 },
             })
-    return "".join(text_parts), tool_calls
+        # redacted_thinking: encrypted, no readable text -> skip
+    return "".join(text_parts), tool_calls, "".join(reasoning_parts)
 
 
 def anthropic_to_openai_response(a_resp: dict, model: str, openai_usage: dict, created: int) -> dict:
-    text, tool_calls = extract_completion(a_resp)
+    text, tool_calls, reasoning = extract_completion(a_resp)
     message: Dict[str, Any] = {"role": "assistant"}
     message["content"] = text if text else (None if tool_calls else "")
+    if reasoning:
+        message["reasoning_content"] = reasoning
     if tool_calls:
         message["tool_calls"] = tool_calls
     return {
@@ -300,6 +310,7 @@ async def translate_stream(
     """
     anthropic_usage = tk.new_anthropic_usage()
     text_accum: List[str] = []
+    reasoning_accum: List[str] = []      # extended-thinking text -> reasoning_content
     tool_meta: Dict[int, dict] = {}      # anthropic block index -> {oi, id, name}
     tool_args: Dict[int, List[str]] = {}  # openai tool index -> arg fragments
     next_oi = 0
@@ -358,6 +369,9 @@ async def translate_stream(
             elif block.get("type") == "text" and block.get("text"):
                 text_accum.append(block["text"])
                 yield _sse(_chunk(chunk_model, created, rid, {"content": block["text"]}, None))
+            elif block.get("type") in ("thinking", "redacted_thinking") and block.get("thinking"):
+                reasoning_accum.append(block["thinking"])
+                yield _sse(_chunk(chunk_model, created, rid, {"reasoning_content": block["thinking"]}, None))
 
         elif etype == "content_block_delta":
             idx = evt.get("index")
@@ -367,6 +381,12 @@ async def translate_stream(
                 piece = delta.get("text", "")
                 text_accum.append(piece)
                 yield _sse(_chunk(chunk_model, created, rid, {"content": piece}, None))
+            elif dtype == "thinking_delta":
+                piece = delta.get("thinking", "")
+                if piece:
+                    reasoning_accum.append(piece)
+                    yield _sse(_chunk(chunk_model, created, rid, {"reasoning_content": piece}, None))
+            # signature_delta -> ignored (not human-displayable)
             elif dtype == "input_json_delta":
                 meta = tool_meta.get(idx)
                 if meta is not None:
@@ -398,14 +418,17 @@ async def translate_stream(
         for _, meta in sorted(tool_meta.items(), key=lambda kv: kv[1]["oi"])
     ]
     completion_text = "".join(text_accum)
+    reasoning_text = "".join(reasoning_accum)
     finish_reason = finish_reason or ("tool_calls" if final_tool_calls else "stop")
 
-    completion_tokens = tk.count_openai_completion_tokens(completion_text, final_tool_calls)
+    completion_tokens = tk.count_openai_completion_tokens(completion_text, final_tool_calls, reasoning_text)
     openai_usage = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
     }
+    if reasoning_text:
+        openai_usage["completion_tokens_details"] = {"reasoning_tokens": tk.count_text(reasoning_text)}
     log_cb(resolved_model, chunk_model, openai_usage, anthropic_usage)
     debug.log_response(rid, finish_reason, final_tool_calls, completion_text, stream=True)
 

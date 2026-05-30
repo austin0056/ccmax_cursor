@@ -167,14 +167,16 @@ async def chat_completions(request: Request, authorization: Optional[str] = Head
         upstream_returned = a_resp.get("model") or upstream_model  # supplier's real model name
         display_model = settings.resolve_display_model(client_model, upstream_returned)
         anthropic_usage = tk.merge_anthropic_usage(tk.new_anthropic_usage(), a_resp.get("usage"))
-        text, tool_calls = convert.extract_completion(a_resp)
+        text, tool_calls, reasoning = convert.extract_completion(a_resp)
         debug.log_response(rid, convert.map_finish_reason(a_resp.get("stop_reason")), tool_calls, text, stream=False)
-        completion_tokens = tk.count_openai_completion_tokens(text, tool_calls)
+        completion_tokens = tk.count_openai_completion_tokens(text, tool_calls, reasoning)
         openai_usage = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         }
+        if reasoning:
+            openai_usage["completion_tokens_details"] = {"reasoning_tokens": tk.count_text(reasoning)}
         log_usage(rid, upstream_returned, openai_usage, anthropic_usage, stream=False, client_model=display_model)
         response = convert.anthropic_to_openai_response(a_resp, display_model, openai_usage, created)
         return JSONResponse(
