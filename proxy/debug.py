@@ -12,12 +12,21 @@ the response summary reveals whether the model called them.
 import json
 import sys
 import time
+from collections import deque
 
 from .config import settings
+
+# In-memory ring buffer of recent records, exposed via GET /debug/recent so the
+# full request/response can be inspected in a browser (no log access needed).
+_recent = deque(maxlen=12)
 
 
 def enabled() -> bool:
     return settings.debug_dump
+
+
+def recent() -> list:
+    return list(_recent)
 
 
 def _tool_names(tools):
@@ -31,6 +40,7 @@ def _tool_names(tools):
 
 
 def _write(record: dict) -> None:
+    _recent.append(record)
     try:
         with open(settings.debug_log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")

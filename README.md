@@ -178,8 +178,11 @@ SYSTEM_SUFFIX=You are operating inside an agentic coding IDE. Always carry out t
 
 This wording is **action-first with a conditional plan clause** — validated at **agent 4/4
 edits** and **plan 4/4 todos**. Do *not* use "you MUST use the todo tool before doing anything
-else" (it hijacked agent mode ~2 in 4). Set it in Zeabur → Variables (or `.env`), redeploy, and
-use `DEBUG_DUMP=1` to confirm responses now carry `tool_calls`.
+else" (it hijacked agent mode ~2 in 4). Set it in Zeabur → Variables (or `.env`), redeploy.
+
+**Self-serve diagnosis (no log access needed):**
+- `GET /debug/config?key=<PROXY_API_KEY>` — confirm a setting took effect (e.g. `system_suffix_active: true`). Key only needed if `PROXY_API_KEY` is set.
+- With `DEBUG_DUMP=1`: `GET /debug/recent?key=...` returns the last ~12 requests/responses — the exact tools/schema the client sent and whether the model returned `tool_calls`. Reproduce the issue in Cursor, then open this URL in a browser.
 
 If an agent stream still cuts off abruptly, check the proxy logs for a `[stream-error]` line:
 the proxy now ends the SSE cleanly on an upstream drop/timeout (instead of hanging) and logs

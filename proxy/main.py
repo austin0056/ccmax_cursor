@@ -61,6 +61,49 @@ async def healthz():
     return {"ok": True, "upstream": settings.upstream_base_url}
 
 
+@app.get("/debug/recent")
+async def debug_recent(key: Optional[str] = None, authorization: Optional[str] = Header(default=None)):
+    """Inspect the last few captured requests/responses in a browser (needs DEBUG_DUMP=1).
+
+    Open /debug/recent?key=<PROXY_API_KEY> (key only required if PROXY_API_KEY is set).
+    """
+    if settings.proxy_api_key:
+        token = key or ""
+        if not token and authorization and authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
+        if token != settings.proxy_api_key:
+            raise HTTPException(status_code=401, detail="invalid key")
+    if not settings.debug_dump:
+        return {"enabled": False,
+                "hint": "Set DEBUG_DUMP=1, redeploy, retry the action in Cursor, then reload this page."}
+    records = debug.recent()
+    return {"enabled": True, "count": len(records), "records": records}
+
+
+@app.get("/debug/config")
+async def debug_config(key: Optional[str] = None, authorization: Optional[str] = Header(default=None)):
+    """Verify which knobs are actually active (no secrets). Confirms e.g. that SYSTEM_SUFFIX took effect."""
+    if settings.proxy_api_key:
+        token = key or ""
+        if not token and authorization and authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
+        if token != settings.proxy_api_key:
+            raise HTTPException(status_code=401, detail="invalid key")
+    return {
+        "upstream_base_url": settings.upstream_base_url,
+        "has_upstream_key": bool(settings.upstream_api_key),
+        "proxy_api_key_set": bool(settings.proxy_api_key),
+        "debug_dump": settings.debug_dump,
+        "model_override": settings.model_override or None,
+        "model_map": settings.model_map_upstream_to_display,
+        "model_allow": sorted(settings.model_allow),
+        "default_max_tokens": settings.default_max_tokens,
+        "system_suffix_active": bool(settings.system_suffix),
+        "system_suffix_len": len(settings.system_suffix),
+        "system_suffix_preview": settings.system_suffix[:140],
+    }
+
+
 @app.get("/v1/models")
 async def list_models(authorization: Optional[str] = Header(default=None)):
     _check_auth(authorization)
